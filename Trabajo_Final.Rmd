@@ -1,0 +1,835 @@
+---
+title: \textbf{\huge{Trabajo Práctico Final}}
+subtitle: \huge Seminario \textit{Big Data y Minería de Datos}
+author: "Leandro Pisaroni"
+date: "`r format(Sys.time(), '%d de %B de %Y')`"
+
+output:
+  pdf_document:
+    toc: FALSE 
+    toc_depth: 3 
+    number_sections: TRUE
+    includes:
+      in_header: preamble.tex
+
+lang: es-ar #Idioma
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F, message = FALSE, warning = FALSE,
+                      results='hold', #out.width="70%"
+                      fig.align='center',fig.show='hold')
+
+### setea el redondeo y los 7separadores.
+
+#knitr::knit_hooks$set(inline = function(x) {
+#prettyNum(round(x,3))})
+#options(scipen = 999)
+
+
+# options(
+#   scipen = 7, ##options(scipen = 999) es equivalente creo, previene la cientifica
+#   digits = 3)
+```
+
+```{r paquetes, include=FALSE}
+#PAQUETES
+library(dplyr) #Manejo y limpieza de datos
+library(tibble) #Más manejos de datos
+library(GGally) #Matriz de correlaciones
+library(ggplot2) #Gráficos
+library(cowplot) #Gráficos en matrices
+library(randomForest) #Random Forest
+library(glmnet) #Regresiones Ridge y LASSO
+library(ncvreg) #Regresión SCAD
+library(pROC) #Curva ROC
+library(MASS) #stepAIC
+library(ROCR)
+
+#FUNCIONES
+calcClassMetric = function(real, predicho, predichoProb ){
+
+  dfMetricas = c( MLmetrics::F1_Score(real, predicho),
+                  MLmetrics::AUC(real, predicho),
+                  MLmetrics::Precision(real,predicho),
+                  MLmetrics::Recall(real,predicho),
+                  MLmetrics::Accuracy(real,predicho),
+                  MLmetrics::LogLoss(real %>% as.numeric,predichoProb)) %>% data.frame %>% t 
+  
+  dfMetricas = round(dfMetricas,3) %>% as.data.frame
+  
+  names(dfMetricas) = c("F1", "AUC", "Precision", "Recall", "Accuracy", "LogLoss")
+  
+  return(dfMetricas)
+}
+
+calcRegMetric=function(real, predicho ){
+
+  dfMetricas = c( MLmetrics::RMSE(real, predicho),
+                  MLmetrics::MAE(real, predicho),
+                  MLmetrics::RMSLE(real,predicho),
+                  MLmetrics::Gini(real,predicho)) %>% data.frame %>% t 
+
+  dfMetricas = round(dfMetricas,3) %>% as.data.frame
+
+  names(dfMetricas) = c("RMSE", "MAE", "RMSLE", "Gini")
+
+  return(dfMetricas)
+}
+```
+
+```{r funciones, eval=FALSE, include=FALSE}
+
+library(forcats) #Manejo de variables categóricas
+
+library(rpart) #Árboles CART
+library(rpart.plot) #Gráfica de árboles CART
+library(caret) #Matriz de confusión
+library(ipred) #Bagging
+
+
+
+#library(skimr) #Resumen de datos más limpio
+#library(glmnet) #Regresiones Ridge y LASSO
+#library(ncvreg) #Regresión SCAD
+#library(pROC) #Curva ROC
+
+
+#library(ISLR)
+#library(kableExtra)
+#library(ggplot2)
+
+
+
+```
+
+\renewcommand\tablename{Tabla}
+\renewcommand{\P}{\text{P}}
+
+# INTRODUCCIÓN
+
+```{r datos, echo=FALSE, message=FALSE, warning=FALSE}
+datos <- read.table(file="heart.dat",
+                    header = FALSE)
+
+colnames(datos) <- c("age",
+                     "sex",
+                     "chest_pain_type",
+                     "resting_blood_pressure",
+                     "serum_cholesterol",
+                     "fasting_blood_sugar_gt_120",
+                     "resting_ekg_results",
+                     "max_heart_rate_achieved",
+                     "exercise_induced_angina",
+                     "oldpeak_eq_st_depression",
+                     "slope_of_peak_exercise",
+                     "num_major_vessels",
+                     "thal",
+                     "heart_disease")
+
+datos <- datos %>%
+  mutate(sex = factor(sex),
+         chest_pain_type = factor(chest_pain_type),
+         fasting_blood_sugar_gt_120 = factor(fasting_blood_sugar_gt_120),
+         resting_ekg_results = factor(resting_ekg_results),
+         exercise_induced_angina = factor(exercise_induced_angina),
+         thal = factor(thal),
+         heart_disease = factor(heart_disease))
+```
+
+Se analiza un conjunto de datos proveniente de un estudio sobre enfermedades cardíacas donde se evaluaron distintas variables de la salud de `r dim(datos)[1]` pacientes y el desarrollo o no de enfermedades coronarias. La Tabla 1 muestra las `r dim(datos)[2]` variables recolectadas en el estudio junto a sus respectivas descripciones.
+
+```{r tabla.variables, echo=FALSE}
+tv.1 <- colnames(datos)
+tv.2 <- c("Edad en años",
+          "Sex del paciente (0: Femenino, 1: Masculino)",
+          "Tipo de dolor de pecho (1, 2, 3 o 4)",
+          "Presión arterial en reposo",
+          "Colesterol sérico [mg/dl]",
+          "¿Nivel de azúcar en sagre en ayunas > 120 mg/dl? (0: No, 1: Si)",
+          "Resultados electrocardiográficos en reposo (0, 1, 2)",
+          "Frecuencia cardíaca máxima alcanzada [latidos/min]",
+          "¿Dolor en el pecho inducido por el ejercicio? (0: No, 1: Si)",
+          "Depresión del ST inducida por el ejercicio en relación con el reposo",
+          "Calidad del flujo sanguíneo al corazón",
+          "Número de vasos principales",
+          "Flujo sanguíneo al corazón (3: 'Normal', 6: 'Defecto fijo', 7: 'Defecto reversible')",
+          "¿Enfermedad coronaria? (1: No, 2: Si)")
+
+tabla.variables <- data.frame(tv.1,tv.2)
+
+colnames(tabla.variables) <- c("Variable","Descripción")
+
+knitr::kable(tabla.variables,
+             format = "pandoc",
+             align = "l",
+             caption = "Descripción de las variables para el estudio de las enfermedades cardíacas.")
+```
+
+El **objetivo** del trabajo es *construir modelos que permitan predecir si un paciente tendrá o no enfermedades cardíacas*. Para esto se emplearán tres técnicas diferentes: árboles de clasificación, regresiones regularizadas y modelos lineales generalizados.
+
+
+# DESCRIPCIÓN DE LOS DATOS
+Antes de evaluar los distintos modelos se describe brevemente los datos seleccionados. En la Tabla 2 se presentan diferentes medidas resumen para las variables del estudio, en la Figura \ref{grafico.caterogicas} se muestra la distribución de las variables categóricas y en la Figura \ref{enfermedad.grafico} la distribución de los pacientes con enfermedades cardíacas. Finalmente, en la Figura \ref{matriz.correlaciones} se presenta la matriz de correlaciones lineales.
+
+```{r division.variables, echo=FALSE}
+#Se separan las variables numéricas de las categóricas
+nvars <- names(datos)[
+  (sapply(X = datos, FUN = class)) %in% c("integer", "numeric", "double") 
+  ]
+
+cvars <- names(datos)[
+  (sapply(X = datos, FUN = class)) %in% 
+    c("character", "factor", "logical", "text")
+  ]
+
+cvars <- cvars[-7]
+```
+
+```{r tabla.resumen.cuantitativas, echo=FALSE}
+tabla.resumen <- datos[nvars] %>% 
+  summarise(across(everything(),
+                   list(mean,
+                        median,
+                        sd,
+                        min,
+                        max)))
+
+tabla.resumen <- matrix(round(tabla.resumen,2),
+                        byrow = TRUE,
+                        ncol = 5)
+
+colnames(tabla.resumen) <- c("Media",
+                                   "Mediana",
+                                   "Desvío",
+                                   "Mínimo",
+                                   "Máximo")
+row.names(tabla.resumen) <- nvars
+
+knitr::kable(tabla.resumen,
+             format = "pandoc",
+             align = "c",
+             digits = 2,
+             caption = "Medidas resumen de las variables cuantitativas del estudio de enfermedades cardíacas.")
+```
+
+```{r grafico.caterogicas, echo=FALSE, fig.align = 'center', fig.cap = "Gráfico de barras para la distribución de las variables categóricas. \\label{grafico.caterogicas}", fig.dim = c(9,6), message = FALSE}
+datos.sexo <- data.frame(table(datos[cvars[1]]))
+grafico.sexo <- datos.sexo %>%
+  ggplot(aes (x= Var1, y=Freq)) +
+  geom_bar(width = 0.4,
+           stat="identity",
+           alpha= 1) +
+  scale_y_continuous("Frecuencia") +
+  xlab("Sexo (0: Mujer, 1: Hombre)") +
+  theme(axis.title.x = element_text(size = 11,
+                                     vjust = 0),
+         axis.title.y = element_text(size = 11),
+         panel.grid.major.y = element_blank())
+
+datos.dolor <- data.frame(table(datos[cvars[2]]))
+grafico.dolor <- datos.dolor %>%
+  ggplot(aes (x= Var1, y=Freq)) +
+  geom_bar(width = 0.4,
+           stat="identity",
+           alpha= 1) +
+  scale_y_continuous("Frecuencia") +
+  xlab("Dolor de pecho") +
+  theme(axis.title.x = element_text(size = 11,
+                                     vjust = 0),
+         axis.title.y = element_text(size = 11),
+         panel.grid.major.y = element_blank())
+
+datos.ayuno <- data.frame(table(datos[cvars[3]]))
+grafico.ayuno <- datos.ayuno %>%
+  ggplot(aes (x= Var1, y=Freq)) +
+  geom_bar(width = 0.4,
+           stat="identity",
+           alpha= 1) +
+  scale_y_continuous("Frecuencia") +
+  xlab("¿Nivel de azúcar en sagre en ayunas > 120 mg/dl?") +
+  theme(axis.title.x = element_text(size = 11,
+                                     vjust = 0),
+         axis.title.y = element_text(size = 11),
+         panel.grid.major.y = element_blank())
+
+datos.reposo <- data.frame(table(datos[cvars[4]]))
+grafico.reposo <- datos.reposo %>%
+  ggplot(aes (x= Var1, y=Freq)) +
+  geom_bar(width = 0.4,
+           stat="identity",
+           alpha= 1) +
+  scale_y_continuous("Frecuencia") +
+  xlab("Resultados electrocardiográficos en reposo") +
+  theme(axis.title.x = element_text(size = 11,
+                                     vjust = 0),
+         axis.title.y = element_text(size = 11),
+         panel.grid.major.y = element_blank())
+
+datos.angina <- data.frame(table(datos[cvars[5]]))
+grafico.angina <- datos.angina %>%
+  ggplot(aes (x= Var1, y=Freq)) +
+  geom_bar(width = 0.4,
+           stat="identity",
+           alpha= 1) +
+  scale_y_continuous("Frecuencia") +
+  xlab("¿Dolor en el pecho inducido por el ejercicio?") +
+  theme(axis.title.x = element_text(size = 11,
+                                     vjust = 0),
+         axis.title.y = element_text(size = 11),
+         panel.grid.major.y = element_blank())
+
+datos.thal <- data.frame(table(datos[cvars[6]]))
+grafico.thal <- datos.thal %>%
+  ggplot(aes (x= Var1, y=Freq)) +
+  geom_bar(width = 0.4,
+           stat="identity",
+           alpha= 1) +
+  scale_y_continuous("Frecuencia") +
+  xlab("Flujo sanguíneo al corazón") +
+  theme(axis.title.x = element_text(size = 11,
+                                     vjust = 0),
+         axis.title.y = element_text(size = 11),
+         panel.grid.major.y = element_blank())
+
+plot_grid(grafico.sexo,
+          grafico.angina,
+          grafico.ayuno,
+          grafico.dolor,
+          grafico.reposo,
+          grafico.thal,
+          ncol = 2)
+```
+
+```{r enfermedad.grafico, echo=FALSE, fig.align = 'center', fig.cap = "Gráfico de barras para la distribución de los pacientes con enfermedades cardíacas en el estudio. \\label{enfermedad.grafico}", fig.dim = c(6,4), message = FALSE, warning=FALSE}
+enfermedad.datos <- data.frame(table(datos$heart_disease))
+
+enfermedad.datos %>%
+ggplot(aes (x= Var1, y=Freq))+
+  geom_bar(width = 0.4, stat="identity",
+           alpha= 1)+
+  scale_y_continuous("Frecuencia") +
+  xlab("¿Enfermedad cardíaca? (1: No, 2: Si)") +
+  theme (axis.title.x = element_text(size = 11,
+                                    vjust = 0),
+          axis.title.y = element_text(size = 11),
+         panel.grid.major.y = element_blank())
+```
+
+```{r matriz.correlaciones, echo=FALSE, fig.align = 'center', fig.cap = "Matriz de correlaciones para las variables del estudio. \\label{matriz.correlaciones}", fig.dim = c(6,4), message = FALSE}
+ggpairs(datos,
+        aes(alpha = 0.1))
+```
+
+Lo primero que se observa en la Figura \ref{enfermedad.grafico} es que las categorías de la variable de **respuesta** están balanceadas, sin que haya un nivel que domine la mayor parte de las observaciones. Teniendo en cuenta, además, que esta variable es categórica, se puede optar como **métricas de comparación de modelos** para evaluar la *capacidad predictiva* de las distintas técnicas a aplicar la *sensibilidad*, la *especificidad*, el *área bajo la curva ROC* (*AUC*), el $F_1$ *Score* y el *Log Loss*, entre otras.
+
+Por otro lado, en la Figura \ref{matriz.correlaciones} se observa que algunas correlaciones lineales entre las **variables de respuesta** son moderadas (como por ejemplo entre la edad y la frecuencia cardíaca máxima, o entre la calidad del flujo cardíaco y la depresión del ST inducida por el ejercicio en relación con el reposo). Por tal motivo, cuando se construyan árboles de clasificación se optará por una técnica que controle estas correlaciones, como son los *bosques aleatorios* (*random forest*).
+
+```{r formula, echo=FALSE, eval = TRUE}
+#Se define la fórmula de las regresiones
+respuesta <- "heart_disease"
+
+predictores <- c(nvars, cvars)
+
+formula <- as.formula(
+  paste0(respuesta, " ~ ", paste(predictores, collapse = " + ") 
+  )
+)
+```
+
+
+# MODELOS PROPUESTOS
+Antes de construir los modelos se divide la totalidad de los pacientes en dos grupos: un *subconjunto de entrenamiento* (con el 70% de las observaciones) y un *subconjunto de prueba* (con el 30% restante).
+
+```{r division.datos, echo=FALSE}
+#Se toma una muestra del conjunto de datos
+set.seed(123)
+indices <-  sample(1:nrow(datos), size = round(0.7 * nrow(datos)))
+
+#Se construyen los subconjuntos de prueba y entrenamiento
+set_entrenamiento <- datos[indices,]
+set_prueba <- datos[-indices,]
+```
+
+El primer conjunto de datos se utilizará para obtener los valores óptimos de los parámetros de cada técnica, mientras que el segundo se usará para estimar las métricas que luego se empleará en la comparación de los modelos.
+
+Además, en todos los casos se utilizará la misma fórmula: se considera como variable de respuesta a *heart_disease* y como variables regresoras a todas las demás.
+
+
+## RANDOM FOREST
+El primero de los modelos que se construye es un **Random Forest**. Para esto se decide trabajar con 50, 75 y 100 árboles y un tamaño mínimo de nodo igual a 1 (por defecto así lo considera la función), y aumentar el número máximo de *features* a muestrear en cada paso de 2 a 10 para determinar el valor óptimo de los mismos. La Tabla 3 muestra diferentes métricas para cada una de estas combinaciones.
+
+```{r random.forest, echo=FALSE, message=FALSE, warning=FALSE}
+##Se inicializa un vector para guardar las métricas
+vector.metricas.rf <- 0
+
+#Se cambian las categorías de la variable heart_disease para el set de prueba
+prueba.heart_disease <- as.numeric(set_prueba$heart_disease)-1
+prueba.heart_disease <- factor(prueba.heart_disease)
+
+#Se construyen diferentes modelos de Random Forest
+for (n.tree in c(50,75,100)) {
+  for (nv.rf in seq(2,10, by=1)) {
+    #Se obtienen random forests con n.rf árboles
+    random.forest <- randomForest(formula,
+                                  data = set_entrenamiento,
+                                  mtry = nv.rf,
+                                  ntree = n.tree)
+  
+    #Se calculan las métricas
+    rf.metricas <- calcClassMetric(prueba.heart_disease,
+                  ifelse(predict(random.forest,
+                                 set_prueba,
+                                 type="prob")[,2]>0.5,1,0),
+                        predict(random.forest,
+                                set_prueba,
+                                type="prob")[,2])
+    
+    #Se guardan los valores en una vector
+    vector.metricas.rf <- c(vector.metricas.rf, rf.metricas)
+  }
+}
+```
+
+```{r tabla.metricas.rf, echo=FALSE}
+random.forest.CM <- vector.metricas.rf
+random.forest.CM <- random.forest.CM[-1]
+random.forest.CM <- matrix(random.forest.CM, byrow = TRUE, ncol = 6)
+
+tabla.metricas.rf <- data.frame(random.forest.CM) %>%
+  mutate(n.tree = c(50,50,50,50,50,50,50,50,50,
+                    75,75,75,75,75,75,75,75,75,
+                    100,100,100,100,100,100,100,100,100),
+         n.bag = c(seq(2,10, by=1),seq(2,10, by=1),seq(2,10, by=1)))
+tabla.metricas.rf <- tabla.metricas.rf[,c(7,8,1,2,3,4,5,6)]
+colnames(tabla.metricas.rf) <- c("Nº Árboles",
+                                 "Nº Variables",
+                                 "$F_1$",
+                                 "AUC",
+                                 "Especificidad",
+                                 "Sensibilidad",
+                                 "Exactitud",
+                                 "LogLoss")
+
+knitr::kable(tabla.metricas.rf,
+             format = "pandoc",
+             align = "c",
+             digits = 2,
+             row.names = FALSE,
+             caption = "Métricas para los Bosques Aleatorios calculados.")
+```
+
+Como puede observarse en la tabla anterior, el modelo que considera 75 árboles y 4 variables presenta una de los mayores valores de $F_1$ y, simultáneamente, uno de los menores valores de Log Loss.
+
+Por otro lado, en la Figura \ref{rf.grafico} se muestra la *tasa de error estimada* versus el número de árboles utilizados para el random forest. En el mismo, se puede observar que el error disminuye muy poco a partir de los 50 árboles. De esta manera, el modelo a utilizar considera 4 variables y 50 árboles. En la Tabla 4 se muestran las métricas para el modelo final de random forest.
+
+```{r rf.grafico, echo=FALSE, fig.align = 'center', fig.cap = "Tasa de error estimada en función de la cantidad de árboles para los random forests. \\label{rf.grafico}", fig.dim = c(6,4), message = FALSE}
+#Se recupera el modelo con n.tree = 75 y nv.rf = 4
+random.forest <- randomForest(formula,
+                              data = set_entrenamiento,
+                              mtry = 4,
+                              ntree = 75)
+
+#Gráfica del error para los RF
+plot(random.forest, main = "")
+```
+
+```{r rf.final, echo=FALSE, message=FALSE, warning=FALSE}
+#Se obtiene el modelo final
+random.forest.final <- randomForest(formula,
+                                    data = set_entrenamiento,
+                                    mtry = 4,
+                                    ntree = 50)
+  
+#Se calculan las métricas
+rf.metricas.final <- calcClassMetric(prueba.heart_disease,
+                                     ifelse(predict(random.forest.final,
+                                                    set_prueba,
+                                                    type="prob")[,2]>0.5,1,0),
+                                     predict(random.forest.final,
+                                             set_prueba,
+                                             type="prob")[,2])
+colnames(rf.metricas.final) <- c("$F_1$",
+                                 "AUC",
+                                 "Especificidad",
+                                 "Sensibilidad",
+                                 "Exactitud",
+                                 "LogLoss")
+
+knitr::kable(rf.metricas.final,
+             format = "pandoc",
+             align = "c",
+             digits = 3,
+             row.names = FALSE,
+             caption = "Métricas para el Bosque Aleatorio de 40 árboles y 6 variables.")
+```
+
+
+### ANÁLISIS DEL MODELO
+
+El modelo anterior puede utilizarse para obtener las probabilidades de que un individuo padezca una enfermedad conoraria, tal como muestra la Tabla 5 (para los primeros 6 pacientes).
+
+```{r rf.probabilidades, echo=FALSE, message=FALSE, warning=FALSE}
+rf.probabilidades <- data.frame(predict(random.forest.final,
+                               set_prueba,
+                               type="prob")[,2])
+
+colnames(rf.probabilidades) <- c("Probabilidad")
+
+knitr::kable(head(rf.probabilidades),
+             format = "pandoc",
+             align = "c",
+             digits = 3,
+             caption = "Probabilidad de que el paciente sufra una enfermedad cardíaca (primeros valores).")
+```
+
+Según este modelo, por ejemplo, el paciente 2 tiene una probabilidad de `r round(rf.probabilidades[1,1],3)` de padecer una enfermedad cardíaca.
+
+
+## REGRESIÓN REGULARIZADA
+La segunda técnica que se utiliza son las **regresiones regularizadas**. Se evalúan regresiones Ridge, LASSO y SCAD, en donde la determinación del valor de $\lambda$ se realiza minimizando el error de estimación por medio de *validación cruzada*.
+
+```{r datos.regresiones, echo=FALSE, message=FALSE, warning=FALSE}
+#Se definen las matrices de datos
+x_entrenamiento <- model.matrix(formula,
+                                set_entrenamiento)
+y_entrenamiento <- data.matrix(set_entrenamiento[respuesta]) 
+
+x_prueba <- model.matrix(formula,
+                         set_prueba)
+y_prueba <- data.matrix(set_prueba[respuesta]) 
+```
+
+```{r regresion.ridge, echo=FALSE}
+#Se calcula el modelo de Regresión Ridge con los datos de Entrenamiento
+ridge_cv <- cv.glmnet(x = x_entrenamiento,
+                      y = y_entrenamiento,
+                      alpha = 0,
+                      type.measure = "mse") 
+
+#Métricas con el Lambda definido por CV
+lambda_ridge <- ridge_cv$lambda.1se
+ridge_coeficientes <- predict(ridge_cv,
+                              s = lambda_ridge,
+                              type = "coefficients")
+predicciones_ridge <- predict(ridge_cv,
+                              s = lambda_ridge,
+                              newx = x_prueba)
+
+metricas.ridge <- calcRegMetric(y_prueba,
+                                predicciones_ridge)
+
+#ridge_mse <- mean((predicciones_ridge - y_prueba)^2)
+```
+
+```{r regresion.lasso, echo=FALSE}
+#Se calcula el modelo de Regresión LASSO con los datos de Entrenamiento
+lasso_cv <- cv.glmnet(x = x_entrenamiento,
+                      y = y_entrenamiento,
+                      alpha = 1,
+                      type.measure = "mse") 
+
+#Métricas con el Lambda definido por CV
+lambda_lasso <- lasso_cv$lambda.1se
+lasso_coeficientes <- predict(lasso_cv,
+                              s = lambda_lasso,
+                              type = "coefficients")
+predicciones_lasso <- predict(lasso_cv,
+                              s = lambda_lasso,
+                              newx = x_prueba)
+
+metricas.lasso <- calcRegMetric(y_prueba,
+                                predicciones_lasso)
+
+#lasso_mse <- mean((predicciones_lasso - y_prueba)^2)
+```
+
+```{r regresion.scad, echo=FALSE}
+#Se calcula el modelo de Regresión SCAD con los datos de Entrenamiento
+scad_cv <- cv.ncvreg(x_entrenamiento,
+                     y_entrenamiento,
+                     penalty ="SCAD",
+                     nlambda = 100) 
+
+#MSE obtenido con el Lambda definido por CV
+lambda_scad <- scad_cv$lambda.min
+scad_coeficientes <- predict(scad_cv,
+                             s = lambda_scad,
+                             type = "coefficients")
+predicciones_scad <- predict(scad_cv,
+                             x_prueba,
+                             s = lambda_scad)
+
+metricas.scad <- calcRegMetric(y_prueba,
+                               predicciones_scad)
+
+#scad_mse <- mean((predicciones_scad - y_prueba)^2)
+```
+
+En la Tabla 6 se muestran los valores de diferentes métricas obtenidas para cada uno de los modelos.
+
+```{r tabla.regresiones, message=FALSE, warning=FALSE, echo=FALSE}
+tabla.regresiones <- rbind(metricas.ridge,
+                           metricas.lasso,
+                           metricas.scad)
+
+rownames(tabla.regresiones) <- c("Ridge", "LASSO", "SCAD")
+
+tabla.regresiones <- tabla.regresiones %>%
+  mutate(Regresión = c("Ridge", "LASSO", "SCAD"))
+tabla.regresiones <- tabla.regresiones[,c(5,1,2,3,4)]
+
+knitr::kable(tabla.regresiones,
+             format = "pandoc",
+             row.names = FALSE,
+             digits = 3,
+             align = "c",
+             caption = "Métricas para las regresiones regularizadas.")
+```
+
+
+### COMPARACIÓN DE LAS REGRESIONES
+Para evaluar el desempeño de los tres modelos, podría utilizarse como métrica de comparación alguna de las presentadas en la tabla anterior. Sin embargo, como la respuesta ("heart_disease") es una variable binaria, se propone usar las curvas ROC de la Figura \ref{curva.roc} para cada uno de los tres modelos. 
+
+```{r matrices.confusion, message=FALSE, warning=FALSE, echo=FALSE}
+#Se obtienen los objetos "roc" para cada modelo
+ROC_ridge <- roc(as.vector(y_prueba),
+                 as.vector(predicciones_ridge),
+                 smoothed = TRUE)
+ROC_lasso <- roc(as.vector(y_prueba),
+                 as.vector(predicciones_lasso),
+                 smoothed = TRUE)
+ROC_scad <- roc(as.vector(y_prueba),
+                as.vector(predicciones_scad),
+                smoothed = TRUE)
+```
+
+```{r curva.roc, echo=FALSE, fig.align = 'center', fig.cap = "Curvas ROC para cada uno de los tres modelos de regresión regularizada. \\label{curva.roc}", fig.dim = c(6,4), message = FALSE}
+#Se extraen los valores de sensibilidad y 1-especificidad
+roc1.p<- data.frame(ROC_ridge$sensitivities,
+                    1- ROC_ridge$specificities,
+                    metodo = "Ridge")
+roc2.p<- data.frame(ROC_lasso$sensitivities,
+                    1- ROC_lasso$specificities,
+                    metodo = "LASSO")
+roc3.p<- data.frame(ROC_scad$sensitivities,
+                    1- ROC_scad$specificities,
+                    metodo = "SCAD")
+
+#Se combinan los data frames
+## Primero es necesario que todas las columnas tengan el mismo nombre
+names(roc1.p) <- c("Sensibilidad","Especificidad","Método")
+names(roc2.p) <- names(roc1.p)
+names(roc3.p) <- names(roc1.p)
+roc.p<- rbind(roc1.p, roc2.p, roc3.p)
+
+#Se grafican las curvas
+ggplot(roc.p, aes(Especificidad, Sensibilidad, colour=Método)) +
+  geom_smooth(method="lm",
+              formula=y~splines::bs(x, df=5),
+              se=FALSE,
+              lwd = 1) +
+  coord_cartesian(xlim=c(0,1),
+                  ylim=c(0,1)) +
+  xlab("1 - Especificidad")
+```
+
+Como puede observarse en la figura anterior, la curva ROC de la regresión Ridge es muy similar tanto en forma como en superficie bajo a ella a la curva ROC de la regresión SCAD. Por su parte, la curva ROC de la regresión LASSO tiene un comportamiento extraño en cuanto a su forma (puede deberse a un sobreajuste del método que construye la curva que la define), por lo que se decide no seguir trabajando con ella.
+
+En la Tabla 7 se presentan los valores calculados del *área bajo la curva* (AUC) para cada una de las dos regresiones restantes. A partir de estos valores, la mejor de las regresiones es la SCAD En la Tabla 8 se muestran las métricas de comparación para este modelo.
+
+```{r tabla.auc, message=FALSE, warning=FALSE}
+tabla.mse <- data.frame(ridge = ROC_ridge$auc,
+                        scad  = ROC_scad$auc)
+
+colnames(tabla.mse) <- c("Ridge", "SCAD")
+
+knitr::kable(round(tabla.mse,3),
+             format = "pandoc",
+             row.names = FALSE,
+             align = "c",
+             caption = "AUC de las curvas ROC para cada una de las regresiones regularizadas.")
+```
+
+```{r regresion.final, echo=FALSE, message=FALSE, warning=FALSE}
+#Se calculan las métricas
+predicciones.ridge.final <- data.frame(predicciones_ridge)
+
+metricas.ridge <- calcRegMetric(y_prueba,
+                                predicciones_ridge)
+
+probabilidades.rige <- ifelse((predicciones_ridge-1)<0,
+                              0,
+                              predicciones_ridge-1)
+
+regresion.metricas.final <- calcClassMetric(prueba.heart_disease,
+                                     ifelse(probabilidades.rige>0.5,1,0),
+                                     probabilidades.rige)
+
+colnames(regresion.metricas.final) <- c("$F_1$",
+                                 "AUC",
+                                 "Especificidad",
+                                 "Sensibilidad",
+                                 "Exactitud",
+                                 "LogLoss")
+
+knitr::kable(regresion.metricas.final,
+             format = "pandoc",
+             align = "c",
+             digits = 3,
+             caption = "Métricas para la Regresión SCAD.")
+```
+
+
+### ANÁLISIS DEL MODELO
+
+Al igual que lo que se hizo con el bosque aleatorio, el modelo anterior puede utilizarse para obtener las probabilidades de que un individuo padezca una enfermedad conoraria, tal como muestra la Tabla 9 (para los primeros 6 pacientes).
+
+```{r ridge.probabilidades, echo=FALSE, message=FALSE, warning=FALSE}
+ridge.probabilidades <- data.frame(probabilidades.rige)
+
+colnames(ridge.probabilidades) <- c("Probabilidad")
+
+knitr::kable(head(ridge.probabilidades),
+             format = "pandoc",
+             align = "c",
+             digits = 3,
+             caption = "Probabilidad de que el paciente sufra una enfermedad cardíaca (primeros valores).")
+```
+
+Según este modelo, por ejemplo, el paciente 2 tiene una probabilidad de `r round(ridge.probabilidades[1,1],3)` de padecer una enfermedad cardíaca.
+
+
+## MODELO LOGIT
+Como última técnica para estudiar los datos se propone un **modelo lineal generalizado** para respuestas binarias que utilice la distribución logística (*modelo logit*).
+
+Para seleccionar las variables que se incluirán en el modelo se utiliza un *proceso de selección automático* sobre el *modelo logit*. Luego, las variables seleccionadas son *resting_blood_pressure*, *serum_cholesterol*, *max_heart_rate_achieved*, *oldpeak_eq_st_depression*, *num_major_vessels*, *sex*, *chest_pain_type*, *exercise_induced_angina* y *thal*.
+
+En la Tabla 10 se muestran las métricas de comparación para este modelo.
+
+```{r seleccion.variables, echo=FALSE}
+modelo_max <- glm(formula,
+                  family=binomial(link="logit"),
+                  data=datos)
+
+modelo_auto <- stepAIC(modelo_max,
+                       direction = "both",
+                       trace = FALSE)
+```
+
+```{r logit.final, echo=FALSE}
+logit.final <- glm(heart_disease ~ resting_blood_pressure + serum_cholesterol + max_heart_rate_achieved +
+                     oldpeak_eq_st_depression + num_major_vessels + sex + chest_pain_type +
+                     exercise_induced_angina + thal,
+                   family = binomial(link="logit"),
+                   data = datos)
+```
+
+```{r metricas.logit, echo=FALSE}
+heart_disease <- as.numeric(datos$heart_disease)-1
+heart_disease <- factor(heart_disease)
+
+predicciones_logit <- prediction(fitted(logit.final),
+                                 heart_disease)
+
+predicciones.logit <- predicciones_logit@predictions[[1]]
+
+logit.metricas.final <- calcClassMetric(heart_disease,
+                                        ifelse(predicciones.logit > 0.5,
+                                               1,
+                                               0),
+                                        predicciones.logit)
+
+colnames(logit.metricas.final) <- c("$F_1$",
+                                    "AUC",
+                                    "Especificidad",
+                                    "Sensibilidad",
+                                    "Exactitud",
+                                    "LogLoss")
+
+knitr::kable(logit.metricas.final,
+             format = "pandoc",
+             align = "c",
+             digits = 3,
+             row.names = FALSE,
+             caption = "Métricas para el Modelo Logit")
+```
+
+
+
+### ANÁLISIS DEL MODELO
+
+Al igual que en los dos caso anteriores, el modelo logit puede utilizarse para obtener las probabilidades de que un individuo padezca una enfermedad conoraria, tal como muestra la Tabla 11 (para los primeros 6 pacientes).
+
+```{r logit.probabilidades, echo=FALSE, message=FALSE, warning=FALSE}
+logit.probabilidades <- data.frame(predicciones.logit)
+
+colnames(logit.probabilidades) <- c("Probabilidad")
+
+tabla.logit <- cbind(c(2,3,13,15,18,19),logit.probabilidades[c(2,3,13,15,18,19),])
+
+colnames(tabla.logit) <- c("","Probabilidad")
+
+knitr::kable(tabla.logit,
+             format = "pandoc",
+             align = "c",
+             digits = 3,
+             caption = "Probabilidad de que el paciente sufra una enfermedad cardíaca (primeros valores).")
+```
+
+Según este modelo, por ejemplo, el paciente 2 tiene una probabilidad de `r round(tabla.logit[1,2],3)` de padecer una enfermedad cardíaca.
+
+
+## COMPARACIÓN DE LOS MODELOS
+Finalmente, para determinar cuál de los métodos utilizados es el que mejor predice la posibilidad de desarrollar enfermedades cardíacas se comparan las métricas calculadas para cada modelo. Estos valores se presentan en la Tabla 12.
+
+```{r comparacion.metricas, echo=FALSE}
+comparacion.metricas <- rbind(rf.metricas.final,
+                              regresion.metricas.final,
+                              logit.metricas.final)
+
+comparacion.metricas <- cbind(c("Random Forest", "SCAD", "Logit"),
+                              comparacion.metricas)
+
+colnames(comparacion.metricas) <- c("Modelo",
+                                    "$F_1$",
+                                    "AUC",
+                                    "Especificidad",
+                                    "Sensibilidad",
+                                    "Exactitud",
+                                    "LogLoss")
+
+knitr::kable(comparacion.metricas,
+             format = "pandoc",
+             align = "c",
+             digits = 3,
+             row.names = FALSE,
+             caption = "Métricas de comparación para los modelos propuestos.")
+```
+
+De acuerdo con la tabla anterior, el mejor de los modelos es el *Logit*, ya que tiene el mayor valor de $F_1$ y el menor valor de Log Loss.
+
+Por otro lado, también se pueden comparar las probabilidades estimadas con cada uno de estos modelos, tal como se muestra en la Tabla 13.
+
+```{r comparacion.probabilidades, echo=FALSE}
+comparacion.probabilidades <- cbind(c(2,3,13,15,18,19),
+                                    head(rf.probabilidades),
+                                    head(ridge.probabilidades),
+                                    logit.probabilidades[c(2,3,13,15,18,19),],
+                                    c("No","Si","No","No","Si","No"))
+
+colnames(comparacion.probabilidades) <- c("Paciente",
+                                          "Random Forest",
+                                          "SCAD",
+                                          "Logit",
+                                          "¿Padece enfermedad?")
+
+knitr::kable(comparacion.probabilidades,
+             format = "pandoc",
+             align = "c",
+             digits = 3,
+             row.names = FALSE,
+             caption = "Probabilidad de que el paciente sufra una enfermedad cardíaca (primeros valores).")
+```
+
+Nuevamente, de acuerdo con los valores estimados, el modelo que mejor predice es el Logit.
